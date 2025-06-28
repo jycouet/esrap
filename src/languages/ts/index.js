@@ -156,10 +156,11 @@ export default (options = {}) => {
 
 	/**
 	 * Get start position from node (either loc.start or start number)
-	 * @param {TSESTree.Node} node
+	 * @param {TSESTree.Node | null | undefined} node
 	 * @returns {number | { line: number, column: number } | null}
 	 */
 	function getNodeStart(node) {
+		if (!node) return null;
 		if (node.loc) return node.loc.start;
 		// @ts-expect-error oxc-parser nodes have start/end properties
 		if (typeof node.start === 'number') return node.start;
@@ -168,10 +169,11 @@ export default (options = {}) => {
 
 	/**
 	 * Get end position from node (either loc.end or end number)
-	 * @param {TSESTree.Node} node
+	 * @param {TSESTree.Node | null | undefined} node
 	 * @returns {number | { line: number, column: number } | null}
 	 */
 	function getNodeEnd(node) {
+		if (!node) return null;
 		if (node.loc) return node.loc.end;
 		// @ts-expect-error oxc-parser nodes have start/end properties
 		if (typeof node.end === 'number') return node.end;
@@ -667,7 +669,7 @@ export default (options = {}) => {
 
 			if (node.implements && node.implements.length > 0) {
 				context.write('implements');
-				sequence(context, node.implements, node.body.loc?.start ?? null, true);
+				sequence(context, node.implements, getNodeStart(node.body), true);
 			}
 
 			context.visit(node.body);
@@ -873,7 +875,7 @@ export default (options = {}) => {
 				// @ts-expect-error `acorn-typescript` and `@typescript-eslint/types` have slightly different type definitions
 				node.parameters ?? node.params,
 				// @ts-expect-error `acorn-typescript` and `@typescript-eslint/types` have slightly different type definitions
-				(node.typeAnnotation ?? node.returnType)?.loc?.start ?? null,
+				getNodeStart(node.typeAnnotation ?? node.returnType) ?? null,
 				false
 			);
 			context.write(')');
@@ -900,9 +902,7 @@ export default (options = {}) => {
 				// @ts-expect-error `acorn-typescript` and `@typescript-eslint/types` have slightly different type definitions
 				node.parameters ?? node.params,
 				// @ts-expect-error `acorn-typescript` and `@typescript-eslint/types` have slightly different type definitions
-				node.typeAnnotation?.typeAnnotation?.loc?.start ??
-					node.returnType?.typeAnnotation?.loc?.start ??
-					null,
+				getNodeStart(node.typeAnnotation?.typeAnnotation ?? node.returnType?.typeAnnotation) ?? null,
 				false
 			);
 
@@ -945,7 +945,7 @@ export default (options = {}) => {
 			if (node.async) context.write('async ');
 
 			context.write('(');
-			sequence(context, node.params, node.body.loc?.start ?? null, false);
+			sequence(context, node.params, getNodeStart(node.body), false);
 			context.write(') => ');
 
 			if (
@@ -1254,7 +1254,7 @@ export default (options = {}) => {
 
 			if (named_specifiers.length > 0) {
 				context.write('{');
-				sequence(context, named_specifiers, node.source.loc?.start ?? null, true);
+				sequence(context, named_specifiers, getNodeStart(node.source), true);
 				context.write('}');
 			}
 
@@ -1431,7 +1431,7 @@ export default (options = {}) => {
 				sequence(
 					context,
 					node.value.params,
-					(node.value.returnType ?? node.value.body).loc?.start ?? null,
+					getNodeStart(node.value.returnType ?? node.value.body),
 					false
 				);
 				context.write(')');
@@ -1838,7 +1838,7 @@ export default (options = {}) => {
 		TSIndexSignature(node, context) {
 			context.write('[');
 
-			sequence(context, node.parameters, node.typeAnnotation?.loc?.start ?? null, false);
+			sequence(context, node.parameters, getNodeStart(node.typeAnnotation), false);
 			context.write(']');
 
 			// @ts-expect-error `acorn-typescript` and `@typescript-eslint/types` have slightly different type definitions
@@ -1855,7 +1855,7 @@ export default (options = {}) => {
 				// @ts-expect-error `acorn-typescript` and `@typescript-eslint/types` have slightly different type definitions
 				node.parameters ?? node.params,
 				// @ts-expect-error `acorn-typescript` and `@typescript-eslint/types` have slightly different type definitions
-				(node.typeAnnotation ?? node.returnType)?.loc?.start ?? null,
+				getNodeStart(node.typeAnnotation ?? node.returnType) ?? null,
 				false
 			);
 			context.write(')');
