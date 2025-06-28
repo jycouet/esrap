@@ -8,6 +8,7 @@ import { print } from '../src/index.js';
 import { acornTs, acornTsx, load } from './common.js';
 import tsx from '../src/languages/tsx/index.js';
 import { parseSync } from 'oxc-parser';
+import { addLocToASTNodes, addLocToComments } from '../src/comments.js';
 
 /** @param {TSESTree.Node} ast */
 function clean(ast) {
@@ -101,6 +102,12 @@ for (const dir of fs.readdirSync(`${__dirname}/samples`)) {
 				// @ts-expect-error
 				experimentalRawTransfer: true
 			}));
+
+			// Add loc property to comments
+			oxc_comments = addLocToComments(oxc_comments, input_js);
+
+			// Add loc property to all AST nodes
+			addLocToASTNodes(oxc_ast, input_js);
 
 			opts = {
 				sourceMapSource: 'input.js',
