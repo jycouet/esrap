@@ -59,6 +59,7 @@ export const add = new Command('add').description('Applies specified adders into
 
 	const adders = v.parse(AddersSchema, adderArgs);
 	const options = v.parse(OptionsSchema, opts);
+
 	const invalidAdders = adders.filter((a) => !adderIds.includes(a) && !aliases.includes(a));
 
 	if (invalidAdders.length > 0) {
@@ -273,6 +274,7 @@ type AdderId = string;
 type QuestionValues = OptionValues<any>;
 
 export type AdderOption = Record<AdderId, QuestionValues>;
+
 export type InstallAdderOptions = { cwd: string; official?: AdderOption; community?: AdderOption };
 
 /**

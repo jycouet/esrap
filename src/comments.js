@@ -27,13 +27,30 @@ function charPosToLineCol(source, charPos) {
  * @returns {any[]} Comments with loc property
  */
 export function addLocToComments(comments, source) {
-	return comments.map(comment => ({
-		...comment,
-		loc: {
-			start: charPosToLineCol(source, comment.start),
-			end: charPosToLineCol(source, comment.end)
+	return comments.map(comment => {
+		let { value } = comment;
+		
+		// Strip leading indentation from block comments with newlines (same logic as acorn parser)
+		if (comment.type === 'Block' && /\n/.test(value)) {
+			let a = comment.start;
+			while (a > 0 && source[a - 1] !== '\n') a -= 1;
+
+			let b = a;
+			while (/[ \t]/.test(source[b])) b += 1;
+
+			const indentation = source.slice(a, b);
+			value = value.replace(new RegExp(`^${indentation}`, 'gm'), '');
 		}
-	}));
+		
+		return {
+			...comment,
+			value,
+			loc: {
+				start: charPosToLineCol(source, comment.start),
+				end: charPosToLineCol(source, comment.end)
+			}
+		};
+	});
 }
 
 /**

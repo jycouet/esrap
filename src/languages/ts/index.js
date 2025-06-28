@@ -292,6 +292,8 @@ export default (options = {}) => {
 		/** @type {string | null} */
 		let prev_type = null;
 		let prev_multiline = false;
+		/** @type {TSESTree.Node | null} */
+		let prev_child = null;
 
 		for (const child of node.body) {
 			if (child.type === 'EmptyStatement') continue;
@@ -300,7 +302,14 @@ export default (options = {}) => {
 			child_context.visit(child);
 
 			if (prev_type !== null) {
-				if (child_context.multiline || prev_multiline || child.type !== prev_type) {
+				// Check if there's a blank line between previous and current statement in original source
+				let has_blank_line_in_source = false;
+				if (prev_child?.loc && child.loc) {
+					const line_diff = child.loc.start.line - prev_child.loc.end.line;
+					has_blank_line_in_source = line_diff > 1;
+				}
+
+				if (child_context.multiline || prev_multiline || child.type !== prev_type || has_blank_line_in_source) {
 					context.margin();
 				}
 
@@ -311,6 +320,7 @@ export default (options = {}) => {
 
 			prev_type = child.type;
 			prev_multiline = child_context.multiline;
+			prev_child = child;
 		}
 
 		if (node.loc) {

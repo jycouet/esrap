@@ -1,4 +1,5 @@
 type A = Awaited<Promise<string>>;
+
 type Todo = { title: string; description: string };
 
 function updateTodo(todo: Todo, fieldsToUpdate: Partial<Todo>) {
