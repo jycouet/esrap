@@ -105,13 +105,88 @@ export default (options = {}) => {
 	let comment_index = 0;
 
 	/**
+	 * Compare positions - works with both numeric positions and loc objects
+	 * @param {number | { line: number, column: number } | null} a
+	 * @param {number | { line: number, column: number } | null} b
+	 * @returns {boolean} true if a comes before b
+	 */
+	function beforePosition(a, b) {
+		// Handle null/undefined cases
+		if (a === null || a === undefined || b === null || b === undefined) {
+			return false;
+		}
+		
+		// Both are numbers (oxc-style)
+		if (typeof a === 'number' && typeof b === 'number') {
+			return a < b;
+		}
+		
+		// Both are loc objects (acorn-style)
+		if (typeof a === 'object' && typeof b === 'object' && 
+		    a && b && 
+		    typeof a.line === 'number' && typeof b.line === 'number') {
+			return before(a, b);
+		}
+		
+		// Mixed types - be conservative and assume no clear ordering
+		return false;
+	}
+
+	/**
+	 * Get start position from comment (either loc.start or start number)
+	 * @param {Comment} comment
+	 * @returns {number | { line: number, column: number } | null}
+	 */
+	function getCommentStart(comment) {
+		if (comment.loc) return comment.loc.start;
+		if (typeof comment.start === 'number') return comment.start;
+		return null;
+	}
+
+	/**
+	 * Get end position from comment (either loc.end or end number)
+	 * @param {Comment} comment
+	 * @returns {number | { line: number, column: number } | null}
+	 */
+	function getCommentEnd(comment) {
+		if (comment.loc) return comment.loc.end;
+		if (typeof comment.end === 'number') return comment.end;
+		return null;
+	}
+
+	/**
+	 * Get start position from node (either loc.start or start number)
+	 * @param {TSESTree.Node} node
+	 * @returns {number | { line: number, column: number } | null}
+	 */
+	function getNodeStart(node) {
+		if (node.loc) return node.loc.start;
+		// @ts-expect-error oxc-parser nodes have start/end properties
+		if (typeof node.start === 'number') return node.start;
+		return null;
+	}
+
+	/**
+	 * Get end position from node (either loc.end or end number)
+	 * @param {TSESTree.Node} node
+	 * @returns {number | { line: number, column: number } | null}
+	 */
+	function getNodeEnd(node) {
+		if (node.loc) return node.loc.end;
+		// @ts-expect-error oxc-parser nodes have start/end properties
+		if (typeof node.end === 'number') return node.end;
+		return null;
+	}
+
+	/**
 	 * Set `comment_index` to be the first comment after `start`.
 	 * Most of the time this is already correct, but if nodes
 	 * have been moved around we may need to search for it
 	 * @param {TSESTree.Node} node
 	 */
 	function reset_comment_index(node) {
-		if (!node.loc) {
+		const nodeStart = getNodeStart(node);
+		if (nodeStart === null || nodeStart === undefined) {
 			comment_index = comments.length;
 			return;
 		}
@@ -119,45 +194,72 @@ export default (options = {}) => {
 		let previous = comments[comment_index - 1];
 		let comment = comments[comment_index];
 
-		if (
-			comment &&
-			comment.loc &&
-			!before(comment.loc.start, node.loc.start) &&
-			(!previous || (previous.loc && before(previous.loc.start, node.loc.start)))
-		) {
-			return;
+		if (comment) {
+			const commentStart = getCommentStart(comment);
+			const prevStart = previous ? getCommentStart(previous) : null;
+
+			if (
+				commentStart !== null && commentStart !== undefined &&
+				!beforePosition(commentStart, nodeStart) &&
+				(!prevStart || beforePosition(prevStart, nodeStart))
+			) {
+				return;
+			}
 		}
 
-		// TODO use a binary search here, account for synthetic nodes (without `loc`)
-		comment_index = comments.findIndex(
-			(comment) => comment.loc && node.loc && !before(comment.loc.start, node.loc.start)
-		);
+		// Find the first comment that comes at or after the node start
+		comment_index = comments.findIndex(comment => {
+			const commentStart = getCommentStart(comment);
+			return commentStart !== null && commentStart !== undefined && !beforePosition(commentStart, nodeStart);
+		});
 		if (comment_index === -1) comment_index = comments.length;
 	}
 
 	/**
 	 * @param {Context} context
-	 * @param {{ line: number, column: number } | null} prev
-	 * @param {{ line: number, column: number } | null} next
+	 * @param {number | { line: number, column: number } | null} prev
+	 * @param {number | { line: number, column: number } | null} next
 	 * @returns {boolean} true if final comment is a line comment
 	 */
 	function flush_trailing_comments(context, prev, next) {
 		while (comment_index < comments.length) {
 			const comment = comments[comment_index];
 
-			if (
-				comment &&
-				prev &&
-				comment.loc.start.line === prev.line &&
-				(next === null || before(comment.loc.end, next))
-			) {
-				context.write(' ');
-				write_comment(comment, context);
+			if (comment && prev) {
+				const commentStart = getCommentStart(comment);
+				const commentEnd = getCommentEnd(comment);
+				
+				if (commentStart === null || commentStart === undefined || commentEnd === null || commentEnd === undefined) {
+					break;
+				}
 
-				comment_index += 1;
+				// Check if this is a trailing comment
+				let isTrailing = false;
+				
+				if (typeof prev === 'object' && prev.line && typeof commentStart === 'object' && commentStart.line) {
+					// Both are loc-based: check if on same line
+					isTrailing = commentStart.line === prev.line;
+				} else if (typeof prev === 'number' && typeof commentStart === 'number') {
+					// Both are position-based: be more conservative
+					// Only consider trailing if it starts immediately adjacent (same line)
+					const gap = commentStart - prev;
+					isTrailing = gap >= 0 && gap <= 1; // Only immediate adjacency (space or no gap)
+				}
 
-				if (comment.type === 'Line') {
-					return true;
+				// Check if comment comes before next element
+				const beforeNext = next === null || beforePosition(commentEnd, next);
+
+				if (isTrailing && beforeNext) {
+					context.write(' ');
+					write_comment(comment, context);
+
+					comment_index += 1;
+
+					if (comment.type === 'Line') {
+						return true;
+					}
+				} else {
+					break;
 				}
 			} else {
 				break;
@@ -169,8 +271,8 @@ export default (options = {}) => {
 
 	/**
 	 * @param {Context} context
-	 * @param {{ line: number, column: number } | null} from
-	 * @param {{ line: number, column: number }} to
+	 * @param {number | { line: number, column: number } | null} from
+	 * @param {number | { line: number, column: number } | null} to
 	 * @param {boolean} pad
 	 */
 	function flush_comments_until(context, from, to, pad) {
@@ -178,19 +280,53 @@ export default (options = {}) => {
 
 		while (comment_index < comments.length) {
 			const comment = comments[comment_index];
+			const commentStart = getCommentStart(comment);
+			const commentEnd = getCommentEnd(comment);
 
-			if (comment && comment.loc && to && before(comment.loc.start, to)) {
-				if (first && from !== null && comment.loc.start.line > from.line) {
-					context.margin();
-					context.newline();
+			if (comment && commentStart !== null && commentStart !== undefined && (to === null || beforePosition(commentStart, to))) {
+				
+				// Add margin/newline before first comment if needed
+				if (first && from !== null && from !== undefined) {
+					let shouldAddMargin = false;
+					
+					if (typeof from === 'object' && from.line && typeof commentStart === 'object' && commentStart.line) {
+						// Both are loc-based: check if comment is on a different line
+						shouldAddMargin = commentStart.line > from.line;
+					} else if (typeof from === 'number' && typeof commentStart === 'number') {
+						// Both are position-based: only add margin if there's significant distance
+						// This suggests there's likely whitespace/newlines between them
+						shouldAddMargin = commentStart > from + 5; // conservative threshold
+					}
+					
+					if (shouldAddMargin) {
+						context.margin();
+						context.newline();
+					}
 				}
 
 				first = false;
 
 				write_comment(comment, context);
 
-				if (comment.loc.end.line < to.line) {
-					context.newline();
+				// Add newline after comment if needed
+				if (commentEnd && commentEnd !== undefined && to !== null && to !== undefined) {
+					let shouldNewline = false;
+					
+					if (typeof commentEnd === 'object' && commentEnd.line && typeof to === 'object' && to.line) {
+						// Both are loc-based: check if comment ends before target line
+						shouldNewline = commentEnd.line < to.line;
+					} else if (typeof commentEnd === 'number' && typeof to === 'number') {
+						// Both are position-based: add newline if there's any gap
+						// Even gap=1 likely means there's a newline in the original source
+						const gap = to - commentEnd;
+						shouldNewline = gap >= 1; // any gap suggests newline
+					}
+					
+					if (shouldNewline) {
+						context.newline();
+					} else if (pad) {
+						context.write(' ');
+					}
 				} else if (pad) {
 					context.write(' ');
 				}
@@ -205,7 +341,7 @@ export default (options = {}) => {
 	/**
 	 * @param {Context} context
 	 * @param {TSESTree.Node[]} nodes
-	 * @param {{ line: number, column: number }} until
+	 * @param {number | { line: number, column: number } | null} until
 	 * @param {boolean} pad
 	 */
 	function sequence(context, nodes, until, pad, separator = ',') {
@@ -225,8 +361,8 @@ export default (options = {}) => {
 				child_context.write(separator);
 			}
 
-			const next = i === nodes.length - 1 ? until : nodes[i + 1]?.loc?.start || null;
-			if (child && flush_trailing_comments(child_context, child.loc?.end || null, next)) {
+			const next = i === nodes.length - 1 ? until : (nodes[i + 1] ? getNodeStart(nodes[i + 1]) : null);
+			if (child && flush_trailing_comments(child_context, getNodeEnd(child), next)) {
 				multiline = true;
 			}
 
@@ -270,7 +406,7 @@ export default (options = {}) => {
 			prev = child;
 		}
 
-		flush_comments_until(context, nodes[nodes.length - 1]?.loc?.end ?? null, until, false);
+		flush_comments_until(context, nodes[nodes.length - 1] ? getNodeEnd(nodes[nodes.length - 1]) : null, until, false);
 
 		if (multiline) {
 			context.dedent();
@@ -313,12 +449,13 @@ export default (options = {}) => {
 			prev_multiline = child_context.multiline;
 		}
 
-		if (node.loc) {
+		const nodeEnd = getNodeEnd(node);
+		if (nodeEnd) {
 			context.newline();
 			flush_comments_until(
 				context,
-				node.body[node.body.length - 1]?.loc?.end ?? null,
-				node.loc.end,
+				node.body[node.body.length - 1] ? getNodeEnd(node.body[node.body.length - 1]) : null,
+				nodeEnd,
 				false
 			);
 		}
@@ -334,7 +471,7 @@ export default (options = {}) => {
 			sequence(
 				context,
 				/** @type {TSESTree.Node[]} */ (node.elements),
-				node.loc?.end ?? null,
+				getNodeEnd(node),
 				false
 			);
 			context.write(']');
@@ -454,14 +591,24 @@ export default (options = {}) => {
 
 				// special case — if final argument has a comment above it,
 				// we make the whole sequence multiline
-				if (
-					is_last &&
-					arg.loc &&
-					comments[comment_index] &&
-					comments[comment_index].loc &&
-					comments[comment_index].loc.start.line < arg.loc.start.line
-				) {
-					child_context.multiline = true;
+				if (is_last && arg) {
+					const argStart = getNodeStart(arg);
+					const comment = comments[comment_index];
+					const commentStart = comment ? getCommentStart(comment) : null;
+					
+					if (argStart && commentStart) {
+						// Check if comment comes before the argument
+						let commentBeforeArg = false;
+						if (typeof argStart === 'object' && argStart.line && typeof commentStart === 'object' && commentStart.line) {
+							commentBeforeArg = commentStart.line < argStart.line;
+						} else if (typeof argStart === 'number' && typeof commentStart === 'number') {
+							commentBeforeArg = commentStart < argStart;
+						}
+						
+						if (commentBeforeArg) {
+							child_context.multiline = true;
+						}
+					}
 				}
 
 				context.visit(arg);
@@ -469,10 +616,10 @@ export default (options = {}) => {
 				if (!is_last) context.write(',');
 
 				const next = is_last
-					? (node.loc?.end ?? null)
-					: (node.arguments[i + 1]?.loc?.start ?? null);
+					? getNodeEnd(node)
+					: (node.arguments[i + 1] ? getNodeStart(node.arguments[i + 1]) : null);
 
-				if (flush_trailing_comments(context, arg.loc?.end ?? null, next)) {
+				if (flush_trailing_comments(context, getNodeEnd(arg), next)) {
 					child_context.multiline = true;
 				}
 
@@ -561,7 +708,7 @@ export default (options = {}) => {
 			}
 
 			context.write('(');
-			sequence(context, node.params, (node.returnType ?? node.body).loc?.start ?? null, false);
+			sequence(context, node.params, node.returnType ? getNodeStart(node.returnType) : getNodeStart(node.body), false);
 			context.write(')');
 
 			if (node.returnType) context.visit(node.returnType);
@@ -688,9 +835,10 @@ export default (options = {}) => {
 
 			context.write(';');
 
+			const lastNode = node.value ?? node.typeAnnotation ?? node.key;
 			flush_trailing_comments(
 				context,
-				(node.value ?? node.typeAnnotation ?? node.key).loc?.end ?? null,
+				getNodeEnd(lastNode),
 				null
 			);
 		},
@@ -769,14 +917,18 @@ export default (options = {}) => {
 		_(node, context, visit) {
 			const is_statement = /(Statement|Declaration)$/.test(node.type);
 
-			if (node.loc) {
-				flush_comments_until(context, null, node.loc.start, true);
+			const nodeStart = getNodeStart(node);
+			if (nodeStart) {
+				flush_comments_until(context, null, nodeStart, true);
 			}
 
 			visit(node);
 
-			if (is_statement && node.loc) {
-				flush_trailing_comments(context, node.loc.end, null);
+			if (is_statement) {
+				const nodeEnd = getNodeEnd(node);
+				if (nodeEnd) {
+					flush_trailing_comments(context, nodeEnd, null);
+				}
 			}
 		},
 
@@ -972,7 +1124,7 @@ export default (options = {}) => {
 			}
 
 			context.write('{');
-			sequence(context, node.specifiers, node.source?.loc?.start ?? node.loc?.end ?? null, true);
+			sequence(context, node.specifiers, node.source ? getNodeStart(node.source) : getNodeEnd(node), true);
 			context.write('}');
 
 			if (node.source) {
@@ -1202,13 +1354,13 @@ export default (options = {}) => {
 
 		ObjectExpression(node, context) {
 			context.write('{');
-			sequence(context, node.properties, node.loc?.end ?? null, true);
+			sequence(context, node.properties, getNodeEnd(node), true);
 			context.write('}');
 		},
 
 		ObjectPattern(node, context) {
 			context.write('{');
-			sequence(context, node.properties, node.loc?.end ?? null, true);
+			sequence(context, node.properties, getNodeEnd(node), true);
 			context.write('}');
 
 			if (node.typeAnnotation) context.visit(node.typeAnnotation);
@@ -1217,6 +1369,16 @@ export default (options = {}) => {
 		// @ts-expect-error this isn't a real node type, but Acorn produces it
 		ParenthesizedExpression(node, context) {
 			context.write('(');
+			
+			// Handle comments between opening paren and expression
+			const nodeStart = getNodeStart(node);
+			const exprStart = getNodeStart(node.expression);
+			
+			if (nodeStart && exprStart) {
+				// Flush any comments that come after the opening paren but before the expression
+				flush_comments_until(context, nodeStart, exprStart, false);
+			}
+			
 			context.visit(node.expression);
 			context.write(')');
 		},
@@ -1228,6 +1390,18 @@ export default (options = {}) => {
 
 		Program(node, context) {
 			body(context, node);
+			
+			// Handle any remaining comments at the end of the program
+			while (comment_index < comments.length) {
+				const comment = comments[comment_index];
+				if (comment) {
+					context.newline();
+					write_comment(comment, context);
+					comment_index += 1;
+				} else {
+					break;
+				}
+			}
 		},
 
 		Property(node, context) {
@@ -1300,7 +1474,7 @@ export default (options = {}) => {
 
 		SequenceExpression(node, context) {
 			context.write('(');
-			sequence(context, node.expressions, node.loc?.end ?? null, false);
+			sequence(context, node.expressions, getNodeEnd(node), false);
 			context.write(')');
 		},
 
@@ -1588,7 +1762,7 @@ export default (options = {}) => {
 
 		TSTypeLiteral(node, context) {
 			context.write('{ ');
-			sequence(context, node.members, node.loc?.end ?? null, false, ';');
+			sequence(context, node.members, getNodeEnd(node), false, ';');
 			context.write(' }');
 		},
 
@@ -1696,7 +1870,7 @@ export default (options = {}) => {
 
 		TSTupleType(node, context) {
 			context.write('[');
-			sequence(context, node.elementTypes, node.loc?.end ?? null, false);
+			sequence(context, node.elementTypes, getNodeEnd(node), false);
 			context.write(']');
 		},
 
@@ -1707,11 +1881,11 @@ export default (options = {}) => {
 		},
 
 		TSUnionType(node, context) {
-			sequence(context, node.types, node.loc?.end ?? null, false, ' |');
+			sequence(context, node.types, getNodeEnd(node), false, ' |');
 		},
 
 		TSIntersectionType(node, context) {
-			sequence(context, node.types, node.loc?.end ?? null, false, ' &');
+			sequence(context, node.types, getNodeEnd(node), false, ' &');
 		},
 
 		TSLiteralType(node, context) {
