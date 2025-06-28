@@ -1692,7 +1692,7 @@ export default (options = {}) => {
 			}
 
 			context.write('(');
-			sequence(context, node.params, node.returnType?.loc?.start ?? node.loc?.end ?? null, false);
+			sequence(context, node.params, node.returnType?.loc?.start ?? getNodeEnd(node)??null , false);
 			context.write(')');
 
 			if (node.returnType) {
@@ -1838,7 +1838,6 @@ export default (options = {}) => {
 		TSIndexSignature(node, context) {
 			context.write('[');
 
-			// @ts-expect-error `acorn-typescript` and `@typescript-eslint/types` have slightly different type definitions
 			sequence(context, node.parameters, node.typeAnnotation?.loc?.start ?? null, false);
 			context.write(']');
 
@@ -1951,7 +1950,7 @@ export default (options = {}) => {
 			context.write(' {');
 			context.indent();
 			context.newline();
-			sequence(context, node.members ?? node.body.members, node.loc?.end ?? null, false);
+			sequence(context, node.members ?? node.body.members, getNodeEnd(node), false);
 			context.dedent();
 			context.newline();
 			context.write('}');
@@ -1983,7 +1982,7 @@ export default (options = {}) => {
 		},
 
 		TSInterfaceBody(node, context) {
-			sequence(context, node.body, node.loc?.end ?? null, true, ';');
+			sequence(context, node.body, getNodeEnd(node), true, ';');
 		},
 
 		TSInterfaceDeclaration(node, context) {
@@ -1992,7 +1991,7 @@ export default (options = {}) => {
 			if (node.typeParameters) context.visit(node.typeParameters);
 			if (node.extends && node.extends.length > 0) {
 				context.write(' extends ');
-				sequence(context, node.extends, node.body.loc?.start ?? null, false);
+				sequence(context, node.extends, getNodeStart(node.body), false);
 			}
 			context.write(' {');
 			context.visit(node.body);
