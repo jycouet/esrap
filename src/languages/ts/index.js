@@ -708,7 +708,7 @@ export default (options = {}) => {
 			}
 
 			context.write('(');
-			sequence(context, node.params, node.returnType ? getNodeStart(node.returnType) : getNodeStart(node.body), false);
+			sequence(context, node.params, node.returnType ? getNodeStart(node.returnType) : (node.body ? getNodeStart(node.body) : null), false);
 			context.write(')');
 
 			if (node.returnType) context.visit(node.returnType);
@@ -759,7 +759,7 @@ export default (options = {}) => {
 			sequence(
 				context,
 				node.value.params,
-				(node.value.returnType ?? node.value.body)?.loc?.start ?? node.loc?.end ?? null,
+				node.value.returnType ? getNodeStart(node.value.returnType) : (node.value.body ? getNodeStart(node.value.body) : null),
 				false
 			);
 			context.write(')');
@@ -1692,7 +1692,7 @@ export default (options = {}) => {
 			}
 
 			context.write('(');
-			sequence(context, node.params, node.returnType?.loc?.start ?? getNodeEnd(node)??null , false);
+			sequence(context, node.params, node.returnType ? getNodeStart(node.returnType) : null, false);
 			context.write(')');
 
 			if (node.returnType) {
